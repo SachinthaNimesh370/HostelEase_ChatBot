@@ -1,4 +1,4 @@
-import { Controller, Get, Req, Request, Res } from '@nestjs/common';
+import { Controller, Get, Post, Req, Request, Res } from '@nestjs/common';
 
 @Controller('whatsapp')
 export class WhatsappController {
@@ -26,5 +26,35 @@ export class WhatsappController {
             res.sendStatus(403);
             }
         }
+    }
+
+    @Post('webhook')
+    handlewebhook(@Req() req, @Res() res){
+        const entries = req.body.entry;
+        for (const entry of entries) {
+        for (const change of entry.changes) {
+            const value = change.value;
+
+            const contact = value.contacts?.[0];
+            const message = value.messages?.[0];
+
+            if (contact && message) {
+                const number = contact.wa_id;
+                const name = contact.profile.name;
+                const text = message.text?.body || '';
+                const timestamp = message.timestamp;
+
+                // Convert Unix timestamp to readable time (optional)
+                const date = new Date(Number(timestamp) * 1000);
+
+                console.log('--- Webhook Message ---');
+                console.log('Number:', number);
+                console.log('Name:', name);
+                console.log('Message:', text);
+                console.log('Time:', date.toString());
+            }
+        }
+    }
+
     }
 }
