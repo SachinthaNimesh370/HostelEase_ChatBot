@@ -122,8 +122,18 @@ export class WhatsappService {
                                 let responseMsg = `Your reg_no: ${regNo}\nComplain Details:\nCategory: ${complaintCategory}\nContent: ${complaintContent}\nDate: ${complaintDate}\nTime: ${complaintTime}`;
                                 await this.sendmassage(sender, responseMsg);
 
-                                // 5. Save to database if all fields are present
-                                if (regNo && complaintCategory && complaintContent && complaintDate && complaintTime) {
+                                // 5. Save to database if all fields are present and content is a real complaint
+                                const greetings = [
+                                    'hi', 'hello', 'hii', 'hey', 'good morning', 'good evening', 'good night', 'greetings', 'hola', 'sup', 'yo'
+                                ];
+                                const isGreeting = greetings.includes(complaintContent.trim().toLowerCase());
+                                const isShort = complaintContent.trim().length < 10;
+                                const isOtherCategory = complaintCategory.toLowerCase() === 'other';
+
+                                if (
+                                    regNo && complaintCategory && complaintContent && complaintDate && complaintTime &&
+                                    !isGreeting && !isShort
+                                ) {
                                     try {
                                         const newComplain = this.complainRepo.create({
                                             catagory: complaintCategory,
