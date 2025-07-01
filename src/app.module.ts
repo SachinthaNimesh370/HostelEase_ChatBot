@@ -8,6 +8,7 @@ import { WhatsappService } from './whatsapp/whatsapp.service';
 import { OpenaiService } from './openai/openai.service';
 import { MessageLog } from './entities/message-log.entity';
 import { UserEntity } from './entities/user.entity';
+import { ComplainEntity } from './entities/complain.entity';
 
 @Module({
   imports: [
@@ -22,7 +23,7 @@ import { UserEntity } from './entities/user.entity';
       autoLoadEntities: true,
       synchronize: false,
     }),
-    TypeOrmModule.forFeature([MessageLog, UserEntity]),
+    TypeOrmModule.forFeature([MessageLog, UserEntity, ComplainEntity]),
   ],
   controllers: [AppController, WhatsappController],
   providers: [AppService, WhatsappService, OpenaiService],
