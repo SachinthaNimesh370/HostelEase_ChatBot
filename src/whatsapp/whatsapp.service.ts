@@ -10,6 +10,8 @@ import { ComplainEntity } from '../entities/complain.entity';
 @Injectable()
 export class WhatsappService {
     private readonly logger = new Logger(WhatsappService.name);
+    // In-memory map to track pending confirmations: sender -> complaint draft
+    private pendingConfirmations: Map<string, any> = new Map();
 
     constructor(
         private openaiService: OpenaiService,
@@ -69,6 +71,40 @@ export class WhatsappService {
                             const timestamp = Number(message.timestamp) * 1000; // Convert to milliseconds
                             const date = new Date(timestamp);
 
+                            // 1. Check if awaiting confirmation from this sender
+                            if (this.pendingConfirmations.has(sender)) {
+                                const draft = this.pendingConfirmations.get(sender);
+                                if (content.trim().toLowerCase() === 'yes') {
+                                    // User confirmed, save to DB
+                                    try {
+                                        const newComplain = this.complainRepo.create({
+                                            catagory: draft.complaintCategory,
+                                            content: draft.complaintContent,
+                                            date: draft.complaintDate,
+                                            status: 'Pending',
+                                            time: draft.complaintTime,
+                                            studentId: draft.regNo,
+                                            wardenId: undefined
+                                        });
+                                        await this.complainRepo.save(newComplain);
+                                        await this.sendmassage(sender, 'Your complaint has been successfully submitted. Please wait while the warden resolves your complaint.');
+                                        this.logger.log('Complaint saved to database.');
+                                    } catch (err) {
+                                        this.logger.error('Failed to save complaint:', err);
+                                        await this.sendmassage(sender, 'Sorry, server is busy. Try again later.');
+                                    }
+                                    this.pendingConfirmations.delete(sender);
+                                    return;
+                                } else if (content.trim().toLowerCase() === 'no') {
+                                    await this.sendmassage(sender, 'Okay, please re-enter your complaint details.');
+                                    this.pendingConfirmations.delete(sender);
+                                    return;
+                                } else {
+                                    await this.sendmassage(sender, 'Please reply YES to confirm or NO to re-enter your complaint.');
+                                    return;
+                                }
+                            }
+
                             // Check if sender exists in user_entity with state true
                             let user;
                             try {
@@ -85,6 +121,15 @@ export class WhatsappService {
                                 // User found and state is true
                                 // 1. Get reg_no
                                 const regNo = user.regNo;
+
+                                // Check for non-meaningful/greeting/short messages BEFORE AI extraction
+                                const greetings = [
+                                    'hi', 'hello', 'hii', 'hey', 'good morning', 'good evening', 'good night', 'greetings', 'hola', 'sup', 'yo', 'dear'
+                                ];
+                                if (greetings.includes(content.trim().toLowerCase()) || content.trim().length < 10) {
+                                    await this.sendmassage(sender, 'I am Hostel Ease Complaint Agent. What is your complaint? Please describe your issue.');
+                                    continue;
+                                }
 
                                 // 2. Ask OpenAI to extract complain fields with improved prompt and strict category set
                                 const categories = ["maintenance", "cleanliness", "food", "security", "other"];
@@ -118,15 +163,47 @@ export class WhatsappService {
                                 let complaintCategory = (aiExtracted.category && categories.includes(aiExtracted.category.toLowerCase())) ? aiExtracted.category : 'Other';
                                 let complaintContent = aiExtracted.content && aiExtracted.content.trim() ? aiExtracted.content : content;
 
-                                // 4. Compose response
-                                let responseMsg = `Your reg_no: ${regNo}\nComplain Details:\nCategory: ${complaintCategory}\nContent: ${complaintContent}\nDate: ${complaintDate}\nTime: ${complaintTime}`;
+                                // Format date as YYYY/MM/DD and time as h.mm AM/PM
+                                function formatDate(d: string) {
+                                    // Accepts YYYY-MM-DD or YYYY/MM/DD
+                                    const parts = d.includes('-') ? d.split('-') : d.split('/');
+                                    if (parts.length === 3) {
+                                        return `${parts[0]}/${parts[1]}/${parts[2]}`;
+                                    }
+                                    return d;
+                                }
+                                function formatTime(t: string) {
+                                    // Accepts HH:mm:ss or HH:mm
+                                    const [h, m] = t.split(':');
+                                    let hour = parseInt(h, 10);
+                                    const minute = m;
+                                    const ampm = hour >= 12 ? 'PM' : 'AM';
+                                    hour = hour % 12;
+                                    if (hour === 0) hour = 12;
+                                    return `${hour}.${minute} ${ampm}`;
+                                }
+
+                                let formattedDate = formatDate(complaintDate);
+                                let formattedTime = formatTime(complaintTime);
+
+                                // 4. Compose response (no date/time in WhatsApp message)
+                                let responseMsg = `Your reg_no: ${regNo}\nComplain Details:\nCategory: ${complaintCategory}\nContent: ${complaintContent}\n\nIs this correct? Reply YES to confirm or NO to re-enter.`;
                                 await this.sendmassage(sender, responseMsg);
 
+                                // Store draft for confirmation (still keep date/time for DB)
+                                this.pendingConfirmations.set(sender, {
+                                    regNo,
+                                    complaintCategory,
+                                    complaintContent,
+                                    complaintDate: formattedDate,
+                                    complaintTime: formattedTime
+                                });
+
                                 // 5. Save to database if all fields are present and content is a real complaint
-                                const greetings = [
-                                    'hi', 'hello', 'hii', 'hey', 'good morning', 'good evening', 'good night', 'greetings', 'hola', 'sup', 'yo'
+                                const greetings2 = [
+                                    'hi', 'hello', 'hii', 'hey', 'good morning', 'good evening', 'good night', 'greetings', 'hola', 'sup', 'yo', 'dear'
                                 ];
-                                const isGreeting = greetings.includes(complaintContent.trim().toLowerCase());
+                                const isGreeting = greetings2.includes(complaintContent.trim().toLowerCase());
                                 const isShort = complaintContent.trim().length < 10;
                                 const isOtherCategory = complaintCategory.toLowerCase() === 'other';
 
@@ -149,6 +226,10 @@ export class WhatsappService {
                                     } catch (err) {
                                         this.logger.error('Failed to save complaint:', err);
                                     }
+                                } else {
+                                    // If not a valid complaint (greeting or too short), reply with intro/help message
+                                    await this.sendmassage(sender, 'I am Hostel Ease Complaint Agent. What is your complaint? Please describe your issue.');
+                                    return;
                                 }
                             } else {
                                 // User not found or state is not true
